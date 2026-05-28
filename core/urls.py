@@ -21,3 +21,13 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('', include('emissions_tracker.urls')),
 ]
+
+# 🛠️ AUTO-ADMIN CREATOR WORKAROUND FOR RENDER FREE TIER
+from django.contrib.auth import get_user_model
+try:
+    User = get_user_model()
+    if not User.objects.filter(username='admin').exists():
+        User.objects.create_superuser('admin', 'analyst@breatheesg.com', 'BreatheAdmin123!')
+        print("🚀 Superuser 'admin' created successfully via boot script!")
+except Exception as e:
+    print("Auto-superuser creation skipped or pending migrations:", e)
