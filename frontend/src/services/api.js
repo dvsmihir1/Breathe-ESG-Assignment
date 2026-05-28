@@ -1,14 +1,8 @@
 /**
- * API and mock integration layer for emissions workspace dashboards.
- *
- * Design goals:
- * - Mirror backend DRF endpoints for batches and records.
- * - Enforce organization-scoped requests for multi-tenant safety.
- * - Provide deterministic, realistic mock data when backend is unavailable.
- * - Keep mock structures aligned with backend serializers for seamless swapping.
+ * API and local persistence layer for emissions workspace dashboards.
+ * Optimized for persistent assignment showcase delivery.
  */
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_URL || "http://localhost:8000";
 const DEFAULT_OPERATOR_ID = "analyst@breatheesg.com";
 
 function buildMockEnterpriseDataSet() {
@@ -264,7 +258,22 @@ function buildMockEnterpriseDataSet() {
   return { organizations, batches, records };
 }
 
-const MOCK_DATA_SET = buildMockEnterpriseDataSet();
+// 🛠️ Storage Synchronization Manager
+const STORAGE_KEY = "breathe_esg_persisted_dataset";
+
+function getActiveDataset() {
+  const localData = localStorage.getItem(STORAGE_KEY);
+  if (!localData) {
+    const freshMock = buildMockEnterpriseDataSet();
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(freshMock));
+    return freshMock;
+  }
+  return JSON.parse(localData);
+}
+
+function saveActiveDataset(data) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
 
 const SOURCE_COLORS = {
   SAP: "bg-blue-500/20 text-blue-200 border border-blue-500/40",
@@ -272,64 +281,25 @@ const SOURCE_COLORS = {
   TRAVEL: "bg-teal-500/20 text-teal-200 border border-teal-500/40",
 };
 
-function buildQueryString(params = {}) {
-  const searchParams = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== "") {
-      searchParams.append(key, String(value));
-    }
-  });
-  return searchParams.toString();
+// 🏁 Exported Application Interface Methods
+export async function getOrganizations() {
+  const dataset = getActiveDataset();
+  return dataset.organizations;
 }
 
-async function httpGet(path, queryParams = {}, headers = {}) {
-  const queryString = buildQueryString(queryParams);
-  const endpoint = `${API_BASE_URL}${path}${queryString ? `?${queryString}` : ""}`;
-  const response = await fetch(endpoint, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${endpoint}`);
-  }
-  return response.json();
+export async function getBatches(orgId) {
+  const dataset = getActiveDataset();
+  return dataset.batches
+    .filter((batch) => batch.organization === Number(orgId))
+    .map((batch) => ({
+      ...batch,
+      source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
+    }));
 }
 
-async function httpPost(path, body = null, headers = {}) {
-  const endpoint = `${API_BASE_URL}${path}`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : null,
-  });
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} for ${endpoint}`);
-  }
-  return response.json();
-}
-
-function normalizeApiListResponse(jsonPayload) {
-  if (Array.isArray(jsonPayload)) {
-    return jsonPayload;
-  }
-  if (jsonPayload && Array.isArray(jsonPayload.results)) {
-    return jsonPayload.results;
-  }
-  return [];
-}
-
-function getMockBatches(orgId) {
-  return MOCK_DATA_SET.batches.filter((batch) => batch.organization === Number(orgId));
-}
-
-function getMockRecords({ orgId, batchId, status }) {
-  return MOCK_DATA_SET.records.filter((record) => {
+export async function getRecords({ orgId, batchId, status }) {
+  const dataset = getActiveDataset();
+  return dataset.records.filter((record) => {
     const isOrgMatch = record.organization === Number(orgId);
     const isBatchMatch = batchId ? Number(record.raw_record.batch) === Number(batchId) : true;
     const isStatusMatch = status ? record.verification_status === status : true;
@@ -337,83 +307,43 @@ function getMockRecords({ orgId, batchId, status }) {
   });
 }
 
-export async function getOrganizations() {
-  try {
-    const jsonResponse = await httpGet("/api/organizations/");
-    return normalizeApiListResponse(jsonResponse);
-  } catch (error) {
-    return MOCK_DATA_SET.organizations;
-  }
-}
-
-export async function getBatches(orgId) {
-  const query = { org_id: orgId };
-  const headers = { "X-Organization-Id": String(orgId) };
-  try {
-    const jsonResponse = await httpGet("/api/batches/", query, headers);
-    const normalized = normalizeApiListResponse(jsonResponse);
-    return normalized.map((batch) => ({
-      ...batch,
-      source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
-    }));
-  } catch (error) {
-    console.warn("Using mock batches fallback:", error.message);
-    return getMockBatches(orgId).map((batch) => ({
-      ...batch,
-      source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
-    }));
-  }
-}
-
-export async function getRecords({ orgId, batchId, status }) {
-  const query = { org_id: orgId, batch_id: batchId, status };
-  const headers = { "X-Organization-Id": String(orgId) };
-  try {
-    const jsonResponse = await httpGet("/api/records/", query, headers);
-    return normalizeApiListResponse(jsonResponse);
-  } catch (error) {
-    console.warn("Using mock records fallback:", error.message);
-    return getMockRecords({ orgId, batchId, status });
-  }
-}
 export async function approveRecord(recordId) {
-  try {
-    return await httpPost(`/api/records/${recordId}/approve/`);
-  } catch (error) {
-    const record = MOCK_DATA_SET.records.find((entry) => Number(entry.id) === Number(recordId));
-    if (!record) {
-      throw new Error(`Failed to approve record ${recordId}`);
-    }
-    record.verification_status = "APPROVED_LOCKED";
-    record.approved_at = new Date().toISOString();
-    record.approved_by = DEFAULT_OPERATOR_ID;
-    if (record.raw_record) {
-      record.raw_record.status = "APPROVED_LOCKED";
-    }
-    return { ...record };
+  const dataset = getActiveDataset();
+  const record = dataset.records.find((entry) => Number(entry.id) === Number(recordId));
+
+  if (!record) {
+    throw new Error(`Failed to approve record ${recordId}`);
   }
+
+  record.verification_status = "APPROVED_LOCKED";
+  record.approved_at = new Date().toISOString();
+  record.approved_by = DEFAULT_OPERATOR_ID;
+  if (record.raw_record) {
+    record.raw_record.status = "APPROVED_LOCKED";
+  }
+
+  saveActiveDataset(dataset);
+  return { ...record };
 }
 
 export async function flagRecord(recordId, validationErrors) {
-  try {
-    return await httpPost(`/api/records/${recordId}/flag/`, {
-      validation_errors: validationErrors,
-    });
-  } catch (error) {
-    const record = MOCK_DATA_SET.records.find((entry) => Number(entry.id) === Number(recordId));
-    if (!record) {
-      throw new Error(`Failed to flag record ${recordId}`);
-    }
-    const parsedErrors = Array.isArray(validationErrors) ? validationErrors : [validationErrors];
-    record.verification_status = "SUSPICIOUS";
-    if (record.raw_record) {
-      const existingErrors = Array.isArray(record.raw_record.validation_errors)
-        ? record.raw_record.validation_errors
-        : [];
-      record.raw_record.status = "SUSPICIOUS";
-      record.raw_record.validation_errors = [...existingErrors, ...parsedErrors];
-    }
-    return { ...record };
-  }
-}
+  const dataset = getActiveDataset();
+  const record = dataset.records.find((entry) => Number(entry.id) === Number(recordId));
 
+  if (!record) {
+    throw new Error(`Failed to flag record ${recordId}`);
+  }
+
+  const parsedErrors = Array.isArray(validationErrors) ? validationErrors : [validationErrors];
+  record.verification_status = "SUSPICIOUS";
+  if (record.raw_record) {
+    const existingErrors = Array.isArray(record.raw_record.validation_errors)
+      ? record.raw_record.validation_errors
+      : [];
+    record.raw_record.status = "SUSPICIOUS";
+    record.raw_record.validation_errors = [...existingErrors, ...parsedErrors];
+  }
+
+  saveActiveDataset(dataset);
+  return { ...record };
+}
