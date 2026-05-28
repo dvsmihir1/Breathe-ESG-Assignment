@@ -8,7 +8,7 @@
  * - Keep mock structures aligned with backend serializers for seamless swapping.
  */
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || process.env.REACT_APP_API_URL || "http://localhost:8000";
 const DEFAULT_OPERATOR_ID = "analyst@breatheesg.com";
 
 function buildMockEnterpriseDataSet() {
@@ -352,14 +352,12 @@ export async function getBatches(orgId) {
   try {
     const jsonResponse = await httpGet("/api/batches/", query, headers);
     const normalized = normalizeApiListResponse(jsonResponse);
-    if (normalized.length > 0) {
-      return normalized.map((batch) => ({
-        ...batch,
-        source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
-      }));
-    }
-    throw new Error("Backend returned empty dataset.");
+    return normalized.map((batch) => ({
+      ...batch,
+      source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
+    }));
   } catch (error) {
+    console.warn("Using mock batches fallback:", error.message);
     return getMockBatches(orgId).map((batch) => ({
       ...batch,
       source_type_badge_class: SOURCE_COLORS[batch.source_type] || "bg-zinc-800 text-zinc-200 border border-zinc-700",
@@ -372,16 +370,12 @@ export async function getRecords({ orgId, batchId, status }) {
   const headers = { "X-Organization-Id": String(orgId) };
   try {
     const jsonResponse = await httpGet("/api/records/", query, headers);
-    const normalized = normalizeApiListResponse(jsonResponse);
-    if (normalized.length > 0) {
-      return normalized;
-    }
-    throw new Error("Backend returned empty dataset.");
+    return normalizeApiListResponse(jsonResponse);
   } catch (error) {
+    console.warn("Using mock records fallback:", error.message);
     return getMockRecords({ orgId, batchId, status });
   }
 }
-
 export async function approveRecord(recordId) {
   try {
     return await httpPost(`/api/records/${recordId}/approve/`);
